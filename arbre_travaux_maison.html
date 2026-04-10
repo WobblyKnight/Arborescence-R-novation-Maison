@@ -1,0 +1,752 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Arbre des Travaux en Maison</title>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+<style>
+/* ═══════════════════════════════════════════════════════════════
+   STYLES — ne toucher que si tu veux changer l'apparence
+   ═══════════════════════════════════════════════════════════════ */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: 'Instrument Sans', 'Segoe UI', system-ui, sans-serif;
+  background: #f8fafc;
+  color: #1a1a2e;
+  padding: 24px 16px;
+}
+.container { max-width: 880px; margin: 0 auto; }
+h1 {
+  font-size: 24px; font-weight: 700; margin-bottom: 4px;
+  background: linear-gradient(135deg, #1e3a5f, #2563eb);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.subtitle { font-size: 13px; color: #64748b; margin-bottom: 16px; }
+.toolbar {
+  display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 16px;
+}
+#search {
+  flex: 1 1 220px; padding: 9px 14px; border-radius: 8px;
+  border: 1px solid #e2e8f0; font-size: 13px; outline: none;
+  background: #fff; font-family: inherit;
+  transition: border-color 0.2s;
+}
+#search:focus { border-color: #2563eb; }
+.btn-group { display: flex; gap: 4px; }
+.btn {
+  padding: 7px 14px; border-radius: 6px; border: 1px solid #e2e8f0;
+  background: #fff; font-size: 12px; font-weight: 500; cursor: pointer;
+  color: #475569; white-space: nowrap; font-family: inherit;
+  transition: all 0.15s;
+}
+.btn:hover { background: #f1f5f9; border-color: #94a3b8; }
+.tree-container {
+  background: #fff; border: 1px solid #e2e8f0; border-radius: 12px;
+  padding: 12px 8px; max-height: 74vh; overflow-y: auto;
+}
+.node {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px; margin: 1px 0; border-radius: 6px;
+  cursor: pointer; transition: background 0.12s; user-select: none;
+}
+.node:hover { background: var(--hover-bg); }
+.node.leaf { cursor: default; }
+.node.match { background: var(--match-bg); }
+.node-toggle {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; border-radius: 4px; font-size: 11px; font-weight: 700;
+  transition: transform 0.2s;
+}
+.node-toggle.open { transform: rotate(90deg); }
+.node-dot { width: 20px; text-align: center; font-size: 8px; }
+.node-code {
+  font-size: 11px; font-weight: 600; margin-right: 6px;
+  font-family: 'JetBrains Mono', monospace;
+}
+.node-label { flex: 1; }
+.node-count { font-size: 11px; color: #94a3b8; font-weight: 500; }
+.children { margin-left: 20px; }
+.children-line { border-left: 1px solid; margin-left: 19px; }
+
+/* Depth styles */
+.depth-0 .node-label { font-size: 15px; font-weight: 700; letter-spacing: 0.01em; }
+.depth-1 .node-label { font-size: 14px; font-weight: 600; }
+.depth-2 .node-label { font-size: 13px; font-weight: 500; }
+.depth-3 .node-label { font-size: 12px; font-weight: 400; }
+
+.hidden { display: none; }
+
+/* Print */
+@media print {
+  body { padding: 0; }
+  .toolbar, .btn-group { display: none !important; }
+  .tree-container { max-height: none; border: none; box-shadow: none; }
+}
+</style>
+</head>
+<body>
+
+<div class="container">
+  <h1>Arbre des Travaux en Maison</h1>
+  <p class="subtitle" id="stats"></p>
+
+  <div class="toolbar">
+    <input type="text" id="search" placeholder="Rechercher un lot...">
+    <div class="btn-group">
+      <button class="btn" onclick="expandLevel(1)">Niveau 1</button>
+      <button class="btn" onclick="expandLevel(2)">Niveau 2</button>
+      <button class="btn" onclick="expandLevel(3)">Niveau 3</button>
+      <button class="btn" onclick="expandAll()">Tout ouvrir</button>
+      <button class="btn" onclick="collapseAll()">Tout fermer</button>
+    </div>
+  </div>
+
+  <div class="tree-container" id="tree"></div>
+</div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════
+   ██████  DONNÉES — C'EST ICI QUE TU MODIFIES L'ARBRE  ██████
+   
+   COMMENT MODIFIER :
+   - Chaque nœud a : id, lot, et optionnellement children (tableau)
+   - Pour AJOUTER un lot : ajoute un objet { id: "X.X", lot: "Nom" }
+   - Pour AJOUTER un sous-lot : ajoute children: [...] à un nœud
+   - Pour SUPPRIMER : efface l'objet correspondant
+   - Pour RENOMMER : change la valeur de "lot"
+   - Sauvegarde le fichier, rafraîchis le navigateur → c'est à jour
+   
+   EXEMPLE pour ajouter un sous-lot :
+   { id: "28", lot: "Mon nouveau lot", children: [
+     { id: "28.1", lot: "Mon sous-lot A" },
+     { id: "28.2", lot: "Mon sous-lot B" }
+   ]}
+   ═══════════════════════════════════════════════════════════════════ */
+
+const TREE_DATA = [
+  {
+    id: "0", lot: "Études et Diagnostics Préalables", children: [
+      { id: "0.1", lot: "Diagnostics réglementaires", children: [
+        { id: "0.1.1", lot: "DPE (Diagnostic de Performance Énergétique)" },
+        { id: "0.1.2", lot: "Amiante avant travaux" },
+        { id: "0.1.3", lot: "Plomb (CREP)" },
+        { id: "0.1.4", lot: "Termites et état parasitaire" },
+        { id: "0.1.5", lot: "Diagnostic gaz" },
+        { id: "0.1.6", lot: "Diagnostic électricité" }
+      ]},
+      { id: "0.2", lot: "Études techniques", children: [
+        { id: "0.2.1", lot: "Étude géotechnique (G1/G2)" },
+        { id: "0.2.2", lot: "Étude structure (descente de charges)" },
+        { id: "0.2.3", lot: "Étude thermique (RE2020 / audit énergétique)" },
+        { id: "0.2.4", lot: "Étude acoustique" }
+      ]},
+      { id: "0.3", lot: "Relevés et plans", children: [
+        { id: "0.3.1", lot: "Géomètre" },
+        { id: "0.3.2", lot: "Plans d'état des lieux" },
+        { id: "0.3.3", lot: "Modélisation 3D / BIM" }
+      ]},
+      { id: "0.4", lot: "Maîtrise d'œuvre et pilotage", children: [
+        { id: "0.4.1", lot: "Architecte (PC / DP)" },
+        { id: "0.4.2", lot: "Bureau d'études" },
+        { id: "0.4.3", lot: "OPC (Ordonnancement Pilotage Coordination)" },
+        { id: "0.4.4", lot: "CSPS (Coordonnateur Sécurité Protection Santé)" },
+        { id: "0.4.5", lot: "Bureau de contrôle" }
+      ]}
+    ]
+  },
+  {
+    id: "1", lot: "Préparation de Site et Déconstruction", children: [
+      { id: "1.1", lot: "Installation de chantier", children: [
+        { id: "1.1.1", lot: "Clôture de chantier" },
+        { id: "1.1.2", lot: "Base vie (sanitaires, vestiaires)" },
+        { id: "1.1.3", lot: "Bennes et stockage" },
+        { id: "1.1.4", lot: "Échafaudage" },
+        { id: "1.1.5", lot: "Protection des existants" }
+      ]},
+      { id: "1.2", lot: "Curage intérieur", children: [
+        { id: "1.2.1", lot: "Dépose revêtements (sols, murs, plafonds)" },
+        { id: "1.2.2", lot: "Dépose cloisons et faux-plafonds" },
+        { id: "1.2.3", lot: "Dépose équipements sanitaires" },
+        { id: "1.2.4", lot: "Dépose mobilier encastré" }
+      ]},
+      { id: "1.3", lot: "Démolition partielle", children: [
+        { id: "1.3.1", lot: "Abattage de murs porteurs (avec étaiement)" },
+        { id: "1.3.2", lot: "Démolition de planchers" },
+        { id: "1.3.3", lot: "Dépose de charpente" }
+      ]},
+      { id: "1.4", lot: "Désamiantage / Déplombage", children: [
+        { id: "1.4.1", lot: "Confinement" },
+        { id: "1.4.2", lot: "Retrait MCA (matériaux contenant de l'amiante)" },
+        { id: "1.4.3", lot: "Retrait peintures au plomb" },
+        { id: "1.4.4", lot: "Traitement des déchets (BSDA)" }
+      ]},
+      { id: "1.5", lot: "Évacuation et gestion des déchets", children: [
+        { id: "1.5.1", lot: "Tri sélectif sur chantier" },
+        { id: "1.5.2", lot: "Bordereaux de suivi des déchets" },
+        { id: "1.5.3", lot: "Filières de valorisation" }
+      ]}
+    ]
+  },
+  {
+    id: "2", lot: "Terrassement et Fondations", children: [
+      { id: "2.1", lot: "Terrassement général", children: [
+        { id: "2.1.1", lot: "Décaissement" },
+        { id: "2.1.2", lot: "Déblais / Remblais" },
+        { id: "2.1.3", lot: "Nivellement et compactage" },
+        { id: "2.1.4", lot: "Accès chantier" }
+      ]},
+      { id: "2.2", lot: "Fondations superficielles", children: [
+        { id: "2.2.1", lot: "Semelles filantes" },
+        { id: "2.2.2", lot: "Semelles isolées" },
+        { id: "2.2.3", lot: "Radier" },
+        { id: "2.2.4", lot: "Longrines" }
+      ]},
+      { id: "2.3", lot: "Fondations profondes", children: [
+        { id: "2.3.1", lot: "Micropieux" },
+        { id: "2.3.2", lot: "Pieux forés" },
+        { id: "2.3.3", lot: "Puits" },
+        { id: "2.3.4", lot: "Reprise en sous-œuvre" }
+      ]},
+      { id: "2.4", lot: "Drainage périphérique", children: [
+        { id: "2.4.1", lot: "Drain agricole et géotextile" },
+        { id: "2.4.2", lot: "Lit de gravier" },
+        { id: "2.4.3", lot: "Regard de collecte" },
+        { id: "2.4.4", lot: "Pompe de relevage" }
+      ]},
+      { id: "2.5", lot: "Étanchéité des fondations", children: [
+        { id: "2.5.1", lot: "Enduit bitumineux" },
+        { id: "2.5.2", lot: "Membrane Delta-MS" },
+        { id: "2.5.3", lot: "Cuvelage (sous-sols enterrés)" }
+      ]},
+      { id: "2.6", lot: "Vide sanitaire / Terre-plein", children: [
+        { id: "2.6.1", lot: "Hourdis et poutrelles" },
+        { id: "2.6.2", lot: "Plancher sur vide sanitaire" },
+        { id: "2.6.3", lot: "Isolation sous dalle" }
+      ]}
+    ]
+  },
+  {
+    id: "3", lot: "Gros Œuvre — Maçonnerie de Structure", children: [
+      { id: "3.1", lot: "Murs porteurs", children: [
+        { id: "3.1.1", lot: "Maçonnerie traditionnelle (parpaing, brique, pierre, béton cellulaire)" },
+        { id: "3.1.2", lot: "Ossature bois (montants, contreventement, pare-pluie)" },
+        { id: "3.1.3", lot: "Ossature métallique (poteaux-poutres acier)" },
+        { id: "3.1.4", lot: "Béton banché (murs béton armé coulés en place)" }
+      ]},
+      { id: "3.2", lot: "Planchers et dalles", children: [
+        { id: "3.2.1", lot: "Plancher poutrelles-hourdis (béton ou polystyrène)" },
+        { id: "3.2.2", lot: "Dalle pleine béton armé" },
+        { id: "3.2.3", lot: "Plancher bois (solivage, OSB, pare-vapeur)" },
+        { id: "3.2.4", lot: "Plancher collaborant (bac acier + béton)" }
+      ]},
+      { id: "3.3", lot: "Ouvertures et renforcements", children: [
+        { id: "3.3.1", lot: "Linteaux béton / préfabriqués" },
+        { id: "3.3.2", lot: "IPN / HEA / UPN (poutrelles métalliques)" },
+        { id: "3.3.3", lot: "Étaiement provisoire et reprises de charges" }
+      ]},
+      { id: "3.4", lot: "Escalier structure (béton coulé, prémoulé, métal soudé)" },
+      { id: "3.5", lot: "Extension / Surélévation (parpaing, ossature bois, conteneur, modulaire)" }
+    ]
+  },
+  {
+    id: "4", lot: "Charpente et Couverture", children: [
+      { id: "4.1", lot: "Charpente", children: [
+        { id: "4.1.1", lot: "Charpente traditionnelle (fermes, pannes, chevrons)" },
+        { id: "4.1.2", lot: "Charpente industrielle (fermettes)" },
+        { id: "4.1.3", lot: "Charpente métallique" },
+        { id: "4.1.4", lot: "Charpente lamellé-collé" }
+      ]},
+      { id: "4.2", lot: "Couverture", children: [
+        { id: "4.2.1", lot: "Tuiles (terre cuite, béton) — canal, mécanique, plate" },
+        { id: "4.2.2", lot: "Ardoise (naturelle, fibrociment)" },
+        { id: "4.2.3", lot: "Zinc (joint debout, tasseaux)" },
+        { id: "4.2.4", lot: "Bac acier / tôle ondulée" },
+        { id: "4.2.5", lot: "Chaume, lauze, bardeaux bois (patrimonial)" },
+        { id: "4.2.6", lot: "Toiture végétalisée" }
+      ]},
+      { id: "4.3", lot: "Zinguerie", children: [
+        { id: "4.3.1", lot: "Gouttières et descentes EP" },
+        { id: "4.3.2", lot: "Noues, faîtières, rives" },
+        { id: "4.3.3", lot: "Abergements (cheminée, Velux, ventilation)" },
+        { id: "4.3.4", lot: "Dauphins et raccordements EP" }
+      ]},
+      { id: "4.4", lot: "Fenêtres de toit (Velux, Fakro, conduits de lumière, exutoires)" },
+      { id: "4.5", lot: "Étanchéité de toiture-terrasse", children: [
+        { id: "4.5.1", lot: "Membrane EPDM" },
+        { id: "4.5.2", lot: "Bicouche bitume" },
+        { id: "4.5.3", lot: "Résine PU" },
+        { id: "4.5.4", lot: "Relevés d'étanchéité" },
+        { id: "4.5.5", lot: "Isolation inversée" }
+      ]}
+    ]
+  },
+  {
+    id: "5", lot: "Menuiseries Extérieures", children: [
+      { id: "5.1", lot: "Fenêtres et châssis (PVC, alu, bois, mixte — ouvrant français, oscillo-battant, coulissant)" },
+      { id: "5.2", lot: "Baies vitrées et coulissants (2/3/4 vantaux, galandage, levant-coulissant HST)" },
+      { id: "5.3", lot: "Porte d'entrée (blindée, vitrée, pleine — bois, alu, acier, PVC, composite)" },
+      { id: "5.4", lot: "Porte de garage (sectionnelle, enroulable, battante, basculante — motorisation)" },
+      { id: "5.5", lot: "Volets et protections solaires", children: [
+        { id: "5.5.1", lot: "Volets roulants (bloc-baie, rénovation, solaire)" },
+        { id: "5.5.2", lot: "Volets battants (bois, alu, PVC)" },
+        { id: "5.5.3", lot: "BSO (brise-soleil orientable)" },
+        { id: "5.5.4", lot: "Stores bannes et stores extérieurs" },
+        { id: "5.5.5", lot: "Persiennes et jalousies" }
+      ]},
+      { id: "5.6", lot: "Seuils, appuis, rejingots (pierre, alu, béton préfabriqué)" },
+      { id: "5.7", lot: "Motorisation (volets, garage, portillon — filaire, radio, solaire)" }
+    ]
+  },
+  {
+    id: "6", lot: "VRD et Réseaux Enterrés", children: [
+      { id: "6.1", lot: "Voirie (chemin d'accès, allée carrossable — enrobé, gravier stabilisé, pavé, béton désactivé)" },
+      { id: "6.2", lot: "Réseaux humides", children: [
+        { id: "6.2.1", lot: "Raccordement eau potable (tranchée, compteur, regard)" },
+        { id: "6.2.2", lot: "Raccordement eaux usées (tout-à-l'égout, boîte de branchement)" },
+        { id: "6.2.3", lot: "Raccordement eaux pluviales (puisard, noue, réseau séparatif)" }
+      ]},
+      { id: "6.3", lot: "Réseaux secs", children: [
+        { id: "6.3.1", lot: "Fourreaux électriques (ENEDIS, coffret de coupure, TGBT)" },
+        { id: "6.3.2", lot: "Fourreaux télécom / fibre optique (PTO, chambre de tirage)" },
+        { id: "6.3.3", lot: "Raccordement gaz" }
+      ]},
+      { id: "6.4", lot: "Assainissement individuel", children: [
+        { id: "6.4.1", lot: "Fosse toutes eaux" },
+        { id: "6.4.2", lot: "Micro-station d'épuration" },
+        { id: "6.4.3", lot: "Filtre compact" },
+        { id: "6.4.4", lot: "Épandage / lit filtrant" }
+      ]}
+    ]
+  },
+  {
+    id: "7", lot: "Électricité", children: [
+      { id: "7.1", lot: "Distribution générale", children: [
+        { id: "7.1.1", lot: "Tableau électrique (TGBT, disjoncteurs, différentiels, parafoudre)" },
+        { id: "7.1.2", lot: "Colonnes montantes et alimentations" },
+        { id: "7.1.3", lot: "Mise à la terre (piquet, barrette de coupure)" }
+      ]},
+      { id: "7.2", lot: "Courants forts", children: [
+        { id: "7.2.1", lot: "Circuits prises (standard, spécialisées — four, plaque, lave-linge)" },
+        { id: "7.2.2", lot: "Circuits éclairage (points lumineux, va-et-vient, télérupteurs)" },
+        { id: "7.2.3", lot: "Alimentation spécifique (piscine, atelier, garage, extérieur)" }
+      ]},
+      { id: "7.3", lot: "IRVE — Borne de recharge véhicule électrique (wallbox, câblage dédié)" },
+      { id: "7.4", lot: "Courants faibles", children: [
+        { id: "7.4.1", lot: "Réseau informatique (RJ45, baie de brassage, switch)" },
+        { id: "7.4.2", lot: "Prises TV / satellite / TNT" },
+        { id: "7.4.3", lot: "Pré-câblage multimédia (HDMI encastré, HP encastrés)" }
+      ]},
+      { id: "7.5", lot: "Domotique et objets connectés", children: [
+        { id: "7.5.1", lot: "Protocole filaire (KNX, bus)" },
+        { id: "7.5.2", lot: "Protocole sans fil (Zigbee, Z-Wave, Wi-Fi, Matter)" },
+        { id: "7.5.3", lot: "Centrale domotique / box" },
+        { id: "7.5.4", lot: "Scénarios (éclairage, chauffage, volets, ambiances)" }
+      ]},
+      { id: "7.6", lot: "Sécurité", children: [
+        { id: "7.6.1", lot: "Alarme intrusion (centrale, détecteurs, sirène)" },
+        { id: "7.6.2", lot: "Vidéosurveillance (caméras IP, NVR, stockage)" },
+        { id: "7.6.3", lot: "Contrôle d'accès (interphone, visiophone, badges)" },
+        { id: "7.6.4", lot: "Détection incendie (DAAF, détecteurs interconnectés)" }
+      ]}
+    ]
+  },
+  {
+    id: "8", lot: "Plomberie et Réseaux d'Eau", children: [
+      { id: "8.1", lot: "Alimentation eau froide (nourrice, PER, multicouche, cuivre, vannes d'arrêt)" },
+      { id: "8.2", lot: "Production eau chaude sanitaire", children: [
+        { id: "8.2.1", lot: "Ballon électrique (cumulus)" },
+        { id: "8.2.2", lot: "Chauffe-eau thermodynamique (CET)" },
+        { id: "8.2.3", lot: "Ballon solaire (CESI)" },
+        { id: "8.2.4", lot: "Production instantanée (chaudière, micro-accumulé)" }
+      ]},
+      { id: "8.3", lot: "Distribution eau chaude (bouclage sanitaire, calorifuge, attentes)" },
+      { id: "8.4", lot: "Évacuations", children: [
+        { id: "8.4.1", lot: "Réseaux EU — eaux usées (PVC, fonte)" },
+        { id: "8.4.2", lot: "Réseaux EV — eaux vannes (WC)" },
+        { id: "8.4.3", lot: "Réseaux EP intérieurs (eaux pluviales)" },
+        { id: "8.4.4", lot: "Ventilation primaire et secondaire (colonnes de chute, aérateurs)" }
+      ]},
+      { id: "8.5", lot: "Réseau gaz intérieur (cuivre, ROAI, robinet avant appareil, ventilations)" },
+      { id: "8.6", lot: "Traitement de l'eau", children: [
+        { id: "8.6.1", lot: "Adoucisseur" },
+        { id: "8.6.2", lot: "Filtre anti-calcaire" },
+        { id: "8.6.3", lot: "Osmoseur" },
+        { id: "8.6.4", lot: "Stérilisation UV" }
+      ]}
+    ]
+  },
+  {
+    id: "9", lot: "Chauffage et Ventilation", children: [
+      { id: "9.1", lot: "Génération de chaleur", children: [
+        { id: "9.1.1", lot: "PAC air/eau (monobloc, bibloc)" },
+        { id: "9.1.2", lot: "PAC air/air (splits, multisplit, gainable)" },
+        { id: "9.1.3", lot: "PAC géothermique (capteurs horizontaux, sondes verticales)" },
+        { id: "9.1.4", lot: "Chaudière gaz (condensation, THPE)" },
+        { id: "9.1.5", lot: "Chaudière granulés / bûches" },
+        { id: "9.1.6", lot: "Réseau de chaleur urbain" }
+      ]},
+      { id: "9.2", lot: "Émission de chaleur", children: [
+        { id: "9.2.1", lot: "Radiateurs (acier, fonte, alu — basse/haute température)" },
+        { id: "9.2.2", lot: "Plancher chauffant hydraulique (PER, chape fluide)" },
+        { id: "9.2.3", lot: "Plancher chauffant électrique (câble, trame, PRE)" },
+        { id: "9.2.4", lot: "Plafond rayonnant" },
+        { id: "9.2.5", lot: "Sèche-serviettes" }
+      ]},
+      { id: "9.3", lot: "Régulation (thermostat d'ambiance, robinets thermostatiques, sondes, loi d'eau)" },
+      { id: "9.4", lot: "Fumisterie (conduit maçonné, tubage inox, sortie de toit, ramonage)" },
+      { id: "9.5", lot: "Poêles et inserts", children: [
+        { id: "9.5.1", lot: "Poêle à bois bûches" },
+        { id: "9.5.2", lot: "Poêle à granulés (ventilé, canalisable, hydraulique)" },
+        { id: "9.5.3", lot: "Insert et foyer fermé" },
+        { id: "9.5.4", lot: "Habillage cheminée (pierre, métal, placo)" }
+      ]},
+      { id: "9.6", lot: "Ventilation", children: [
+        { id: "9.6.1", lot: "VMC simple flux (autoréglable, hygroréglable A/B)" },
+        { id: "9.6.2", lot: "VMC double flux (échangeur, bypass été)" },
+        { id: "9.6.3", lot: "VMI / VPH (ventilation positive)" },
+        { id: "9.6.4", lot: "Extraction ponctuelle (cuisine, salle de bain)" },
+        { id: "9.6.5", lot: "Puits climatique / puits canadien" }
+      ]},
+      { id: "9.7", lot: "Climatisation pure (split mural, cassette, gainable, réversible)" },
+      { id: "9.8", lot: "Solaire et ENR", children: [
+        { id: "9.8.1", lot: "Panneaux photovoltaïques (autoconsommation, revente, hybride)" },
+        { id: "9.8.2", lot: "Solaire thermique (CESI, SSC)" },
+        { id: "9.8.3", lot: "Batterie de stockage domestique" },
+        { id: "9.8.4", lot: "Micro-éolien" }
+      ]}
+    ]
+  },
+  {
+    id: "10", lot: "Isolation", children: [
+      { id: "10.1", lot: "Isolation des murs", children: [
+        { id: "10.1.1", lot: "ITI — isolation thermique intérieure (laine de verre, laine de roche, PSE, fibre de bois, ouate)" },
+        { id: "10.1.2", lot: "ITE — isolation thermique extérieure (PSE + enduit, bardage ventilé, fibre de bois)" },
+        { id: "10.1.3", lot: "Isolation répartie (monomur, béton cellulaire)" }
+      ]},
+      { id: "10.2", lot: "Isolation de la toiture et combles", children: [
+        { id: "10.2.1", lot: "Combles perdus (soufflage, déroulage)" },
+        { id: "10.2.2", lot: "Rampants (entre et sous chevrons)" },
+        { id: "10.2.3", lot: "Sarking (isolation par l'extérieur de toiture)" }
+      ]},
+      { id: "10.3", lot: "Isolation des planchers", children: [
+        { id: "10.3.1", lot: "Plancher bas sur vide sanitaire (sous face)" },
+        { id: "10.3.2", lot: "Plancher bas sur terre-plein (isolation périphérique ou totale)" },
+        { id: "10.3.3", lot: "Plancher intermédiaire (acoustique)" }
+      ]},
+      { id: "10.4", lot: "Isolation acoustique (cloisons phoniques, plafonds suspendus, désolidarisation, résilients)" },
+      { id: "10.5", lot: "Étanchéité à l'air (pare-vapeur, membrane, jonctions, test infiltrométrie Q4/n50)" }
+    ]
+  },
+  {
+    id: "11", lot: "Plâtrerie et Cloisonnement", children: [
+      { id: "11.1", lot: "Doublages (complexe isolant collé, doublage sur ossature Placostil, contre-cloisons)" },
+      { id: "11.2", lot: "Cloisons de distribution (BA13/BA15, carreaux de plâtre, briques plâtrières, alvéolaires)" },
+      { id: "11.3", lot: "Cloisons techniques (gaines techniques, habillages colonnes, coffres volets roulants)" },
+      { id: "11.4", lot: "Faux plafonds (dalles 60×60, BA13 suspendu, plafond tendu, acoustique)" },
+      { id: "11.5", lot: "Corniches et staff (moulures, rosaces, gorges lumineuses)" },
+      { id: "11.6", lot: "Enduits intérieurs (plâtre projeté, enduit à la chaux, enduit de lissage)" }
+    ]
+  },
+  {
+    id: "12", lot: "Chapes et Sols Techniques", children: [
+      { id: "12.1", lot: "Chape traditionnelle (mortier tiré à la règle)" },
+      { id: "12.2", lot: "Chape fluide (anhydrite ou ciment — enrobage plancher chauffant)" },
+      { id: "12.3", lot: "Ravoirage (rattrapage de niveaux, passage de gaines)" },
+      { id: "12.4", lot: "Ragréage (enduit de sol autolissant)" },
+      { id: "12.5", lot: "Dalle sèche (Fermacell, Knauf Brio — rénovation sans eau)" }
+    ]
+  },
+  {
+    id: "13", lot: "Revêtements de Sol", children: [
+      { id: "13.1", lot: "Carrelage (grès cérame, faïence sol, tomettes, grands formats — pose collée/scellée)" },
+      { id: "13.2", lot: "Parquet", children: [
+        { id: "13.2.1", lot: "Parquet massif (cloué, collé)" },
+        { id: "13.2.2", lot: "Parquet contrecollé (clipsé, collé)" },
+        { id: "13.2.3", lot: "Parquet stratifié" }
+      ]},
+      { id: "13.3", lot: "Sols souples (PVC/vinyle lames/dalles/rouleau, linoléum, moquette, sol résine)" },
+      { id: "13.4", lot: "Sols spéciaux (béton ciré, terrazzo, résine époxy, granito, pierre naturelle)" },
+      { id: "13.5", lot: "Plinthes (bois, MDF, alu, carrelage, encastrées)" }
+    ]
+  },
+  {
+    id: "14", lot: "Revêtements Muraux et Peinture", children: [
+      { id: "14.1", lot: "Peinture (impression, sous-couche, acrylique, glycéro — mate/satinée/brillante)" },
+      { id: "14.2", lot: "Papier peint (intissé, vinyle, panoramique, toile de verre)" },
+      { id: "14.3", lot: "Faïence murale (crédence cuisine, salle de bain, douche italienne)" },
+      { id: "14.4", lot: "Enduits décoratifs (stuc, tadelakt, béton ciré mural, badigeon de chaux)" },
+      { id: "14.5", lot: "Bardage intérieur / Parement (briquettes, pierre, bois, tasseaux)" },
+      { id: "14.6", lot: "Traitement des fissures (calicot, bandes armées, enduit de rebouchage)" }
+    ]
+  },
+  {
+    id: "15", lot: "Menuiseries Intérieures", children: [
+      { id: "15.1", lot: "Portes intérieures (battantes, coulissantes galandage/applique, pivotantes)" },
+      { id: "15.2", lot: "Placards et rangements (dressing, penderies, meubles encastrés, cellier)" },
+      { id: "15.3", lot: "Escaliers intérieurs (bois, métal, verre, béton — droit, quart tournant, hélicoïdal)" },
+      { id: "15.4", lot: "Garde-corps et rampes intérieurs (bois, inox, verre, câble)" },
+      { id: "15.5", lot: "Habillages (coffres, banquettes, niches, bibliothèques encastrées)" }
+    ]
+  },
+  {
+    id: "16", lot: "Équipements Sanitaires", children: [
+      { id: "16.1", lot: "Salle de bain", children: [
+        { id: "16.1.1", lot: "Douche (receveur, paroi, colonne, encastré, italienne)" },
+        { id: "16.1.2", lot: "Baignoire (droite, d'angle, îlot, balnéo)" },
+        { id: "16.1.3", lot: "Meuble vasque (simple, double, suspendu, à poser)" },
+        { id: "16.1.4", lot: "Miroir, éclairage, accessoires (porte-serviettes, patères)" }
+      ]},
+      { id: "16.2", lot: "WC (suspendu bâti-support, à poser, lave-mains intégré, WC lavant/japonais)" },
+      { id: "16.3", lot: "Buanderie (bac à laver, raccordements machine, sèche-linge, étendoir)" }
+    ]
+  },
+  {
+    id: "17", lot: "Cuisine et Agencement", children: [
+      { id: "17.1", lot: "Meubles de cuisine (caissons bas/hauts/colonnes, façades, plan de travail)" },
+      { id: "17.2", lot: "Électroménager (four, plaque, hotte, lave-vaisselle, réfrigérateur — encastrables)" },
+      { id: "17.3", lot: "Évier et robinetterie (inox, résine, céramique — mitigeur, douchette)" },
+      { id: "17.4", lot: "Crédence (carrelage, verre laqué, inox, stratifié)" },
+      { id: "17.5", lot: "Agencement sur mesure (îlot central, cellier, arrière-cuisine, bar)" }
+    ]
+  },
+  {
+    id: "18", lot: "Serrurerie et Métallerie", children: [
+      { id: "18.1", lot: "Garde-corps extérieurs (balcon, terrasse, escalier — acier, alu, inox, verre)" },
+      { id: "18.2", lot: "Verrières intérieures (atelier, cloison vitrée, imposte)" },
+      { id: "18.3", lot: "Structures métalliques décoratives (mezzanine, passerelle, claustra métal)" },
+      { id: "18.4", lot: "Grilles et protections (grilles de défense, barreaudage, volets métalliques)" }
+    ]
+  },
+  {
+    id: "19", lot: "Ravalement et Façades", children: [
+      { id: "19.1", lot: "Ravalement classique (piquage, enduit monocouche/bicouche, peinture façade)" },
+      { id: "19.2", lot: "ITE en façade (PSE + enduit mince RPE, fibre de bois + enduit, bardage ventilé)" },
+      { id: "19.3", lot: "Bardage (bois, composite, zinc, fibrociment, PVC)" },
+      { id: "19.4", lot: "Parement de façade (pierre, brique, plaquettes)" },
+      { id: "19.5", lot: "Nettoyage de façade (hydrogommage, sablage, anti-mousse, hydrofuge)" }
+    ]
+  },
+  {
+    id: "20", lot: "Étanchéité", children: [
+      { id: "20.1", lot: "Toitures-terrasses (membrane EPDM, bicouche bitume, résine PU, lestage/végétalisation)" },
+      { id: "20.2", lot: "Balcons et loggias (SEL, carrelage collé sur étanchéité)" },
+      { id: "20.3", lot: "Pièces humides (SPEC, natte Ditra/Schlüter)" },
+      { id: "20.4", lot: "Joints de dilatation (couvre-joints, mastics souples)" }
+    ]
+  },
+  {
+    id: "21", lot: "Aménagements Extérieurs", children: [
+      { id: "21.1", lot: "Terrasses (bois, composite, dalles sur plots, béton désactivé, pierre naturelle, carrelage)" },
+      { id: "21.2", lot: "Clôtures et portails", children: [
+        { id: "21.2.1", lot: "Clôtures (grillage, panneaux rigides, bois, alu, gabion, mur bahut)" },
+        { id: "21.2.2", lot: "Portails (battant, coulissant — alu, fer forgé, bois, PVC)" },
+        { id: "21.2.3", lot: "Portillon, interphone extérieur" },
+        { id: "21.2.4", lot: "Motorisation portail / portillon" }
+      ]},
+      { id: "21.3", lot: "Éclairage extérieur (bornes, spots encastrés, appliques, projecteurs, solaire, balisage)" },
+      { id: "21.4", lot: "Aménagement paysager", children: [
+        { id: "21.4.1", lot: "Engazonnement (semé, rouleau, synthétique)" },
+        { id: "21.4.2", lot: "Plantations (arbres, haies, massifs, jardinières)" },
+        { id: "21.4.3", lot: "Arrosage automatique (goutte-à-goutte, aspersion, programmateur)" },
+        { id: "21.4.4", lot: "Murets et rocailles" }
+      ]},
+      { id: "21.5", lot: "Récupération d'eau de pluie", children: [
+        { id: "21.5.1", lot: "Cuve enterrée / aérienne" },
+        { id: "21.5.2", lot: "Pompe et filtration" },
+        { id: "21.5.3", lot: "Réseau dédié (WC, arrosage)" }
+      ]},
+      { id: "21.6", lot: "Pergola, carport, abri (bois, alu, bioclimatique, adossée/autoportée)" }
+    ]
+  },
+  {
+    id: "22", lot: "Véranda et Extensions Légères", children: [
+      { id: "22.1", lot: "Véranda (aluminium, bois, acier — vitrage, toiture opaque/vitrée, store intégré)" },
+      { id: "22.2", lot: "Extension ossature bois (murs, toiture, isolation, finitions)" },
+      { id: "22.3", lot: "Extension container / modulaire (pose, raccordements, finitions)" },
+      { id: "22.4", lot: "Surélévation légère (ossature bois sur existant, renfort de structure)" }
+    ]
+  },
+  {
+    id: "23", lot: "Piscine et Bassin", children: [
+      { id: "23.1", lot: "Gros œuvre piscine (terrassement, coque polyester, béton projeté, maçonnerie, panneaux)" },
+      { id: "23.2", lot: "Étanchéité piscine (liner, PVC armé, membrane, carrelage/mosaïque, peinture)" },
+      { id: "23.3", lot: "Filtration (pompe, filtre à sable/cartouche/diatomées, skimmer, buse refoulement)" },
+      { id: "23.4", lot: "Traitement de l'eau (chlore, sel électrolyse, brome, UV, ozone)" },
+      { id: "23.5", lot: "Chauffage piscine (PAC piscine, échangeur, solaire, bâche à bulles)" },
+      { id: "23.6", lot: "Sécurité réglementaire (barrière, alarme, couverture, abri — NF P 90-306 à 309)" },
+      { id: "23.7", lot: "Plage et margelles (pierre reconstituée, bois, béton, carrelage)" },
+      { id: "23.8", lot: "Local technique (dimensionnement, ventilation, raccordements)" }
+    ]
+  },
+  {
+    id: "24", lot: "Traitement et Protection du Bâti", children: [
+      { id: "24.1", lot: "Traitement du bois (anti-termites, anti-capricornes, anti-mérule, injection/pulvérisation)" },
+      { id: "24.2", lot: "Traitement anti-humidité (injection résine remontées capillaires, drainage intérieur, ventilation murs)" },
+      { id: "24.3", lot: "Anti-nuisibles (dératisation, désinsectisation hors bois)" },
+      { id: "24.4", lot: "Protection anti-radon (membrane, ventilation active soubassement)" }
+    ]
+  },
+  {
+    id: "25", lot: "Accessibilité PMR", children: [
+      { id: "25.1", lot: "Adaptation intérieure (élargissement portes, seuils enrasés, barres d'appui, douche PMR)" },
+      { id: "25.2", lot: "Monte-escalier / Élévateur (droit/tournant, plateforme élévatrice, ascenseur privatif)" },
+      { id: "25.3", lot: "Adaptation extérieure (rampe d'accès, chemin stabilisé, signalétique, éclairage adapté)" }
+    ]
+  },
+  {
+    id: "26", lot: "Rénovation Patrimoniale", children: [
+      { id: "26.1", lot: "Maçonnerie ancienne (pierre de taille, rejointoiement, enduit à la chaux, torchis)" },
+      { id: "26.2", lot: "Charpente ancienne (remplacement de pièces, greffes, traitement, consolidation)" },
+      { id: "26.3", lot: "Couverture ancienne (lauze, ardoise ancienne, tuiles canal récupérées)" },
+      { id: "26.4", lot: "Menuiseries anciennes (restauration fenêtres bois, vitraux, ferronnerie d'art)" },
+      { id: "26.5", lot: "Éléments décoratifs (moulures, gypserie, staff, rosaces, corniches, cheminées marbre)" },
+      { id: "26.6", lot: "Sols anciens (tomettes, parquet Versailles/point de Hongrie, pierre — ponçage, restauration)" }
+    ]
+  },
+  {
+    id: "27", lot: "Nettoyage et Réception", children: [
+      { id: "27.1", lot: "Nettoyage de fin de chantier (décapage vitres, aspiration, lessivage, remise en état)" },
+      { id: "27.2", lot: "Réception des travaux (levée de réserves, PV de réception, OPR)" },
+      { id: "27.3", lot: "DOE — Dossier des Ouvrages Exécutés (plans conformes, notices, garanties, certifications)" }
+    ]
+  }
+];
+
+/* ═══════════════════════════════════════════════════════════════════
+   FIN DES DONNÉES — le reste c'est le moteur d'affichage,
+   tu n'as normalement pas besoin d'y toucher
+   ═══════════════════════════════════════════════════════════════════ */
+
+const COLORS = [
+  "#2563eb","#dc2626","#059669","#d97706","#7c3aed","#db2777","#0891b2","#65a30d",
+  "#ea580c","#4f46e5","#0d9488","#b91c1c","#1d4ed8","#9333ea","#c026d3","#ca8a04",
+  "#16a34a","#e11d48","#0284c7","#6d28d9","#be185d","#047857","#9a3412","#1e40af",
+  "#7e22ce","#a21caf","#a16207","#15803d"
+];
+
+const expandedState = {};
+let currentSearch = "";
+
+function countNodes(node) {
+  if (!node.children) return 1;
+  return 1 + node.children.reduce((s, c) => s + countNodes(c), 0);
+}
+
+function nodeMatchesSearch(node, term) {
+  if (!term) return true;
+  if (node.lot.toLowerCase().includes(term)) return true;
+  if (node.children) return node.children.some(c => nodeMatchesSearch(c, term));
+  return false;
+}
+
+function renderNode(node, depth, parentColor) {
+  const hasChildren = node.children && node.children.length > 0;
+  const isOpen = expandedState[node.id];
+  const color = depth === 0 ? COLORS[parseInt(node.id) % COLORS.length] : parentColor;
+  const term = currentSearch.toLowerCase();
+
+  if (term && !nodeMatchesSearch(node, term)) return "";
+
+  const matchesSearch = term && node.lot.toLowerCase().includes(term);
+  const depthClass = "depth-" + Math.min(depth, 3);
+  const borderStyle = depth === 0
+    ? `border-left: 3px solid ${color}`
+    : `border-left: 2px solid ${color}30`;
+
+  let html = `<div class="${depthClass}" style="margin-left: ${depth === 0 ? 0 : 20}px;">`;
+
+  html += `<div class="node ${hasChildren ? '' : 'leaf'} ${matchesSearch ? 'match' : ''}"
+    style="${borderStyle}; --hover-bg: ${color}10; --match-bg: ${color}18;"
+    ${hasChildren ? `onclick="toggleNode('${node.id}')"` : ''}>`;
+
+  if (hasChildren) {
+    html += `<span class="node-toggle ${isOpen ? 'open' : ''}"
+      style="background: ${color}15; color: ${color};">▶</span>`;
+  } else {
+    html += `<span class="node-dot" style="color: ${color}80;">●</span>`;
+  }
+
+  html += `<span class="node-label" style="color: ${depth === 0 ? color : '#1a1a2e'};">`;
+  html += `<span class="node-code" style="color: ${color}99;">${node.id}</span>`;
+  html += node.lot;
+  html += `</span>`;
+
+  if (hasChildren) {
+    html += `<span class="node-count">${node.children.length}</span>`;
+  }
+
+  html += `</div>`;
+
+  if (hasChildren && (isOpen || term)) {
+    html += `<div class="children-line" style="border-color: ${color}20;">`;
+    node.children.forEach(child => {
+      html += renderNode(child, depth + 1, color);
+    });
+    html += `</div>`;
+  }
+
+  html += `</div>`;
+  return html;
+}
+
+function renderTree() {
+  const container = document.getElementById("tree");
+  let html = "";
+  TREE_DATA.forEach(node => {
+    html += renderNode(node, 0, null);
+  });
+  container.innerHTML = html;
+}
+
+function toggleNode(id) {
+  expandedState[id] = !expandedState[id];
+  renderTree();
+}
+
+function walkNodes(nodes, callback, depth) {
+  nodes.forEach(n => {
+    callback(n, depth);
+    if (n.children) walkNodes(n.children, callback, depth + 1);
+  });
+}
+
+function expandLevel(targetDepth) {
+  // Reset all
+  Object.keys(expandedState).forEach(k => delete expandedState[k]);
+  walkNodes(TREE_DATA, (n, depth) => {
+    if (n.children && depth < targetDepth) expandedState[n.id] = true;
+  }, 0);
+  renderTree();
+}
+
+function expandAll() {
+  walkNodes(TREE_DATA, (n) => {
+    if (n.children) expandedState[n.id] = true;
+  }, 0);
+  renderTree();
+}
+
+function collapseAll() {
+  Object.keys(expandedState).forEach(k => delete expandedState[k]);
+  renderTree();
+}
+
+// Init
+document.addEventListener("DOMContentLoaded", () => {
+  const total = TREE_DATA.reduce((s, n) => s + countNodes(n), 0);
+  document.getElementById("stats").textContent =
+    TREE_DATA.length + " lots principaux — " + total + " segments au total";
+
+  document.getElementById("search").addEventListener("input", (e) => {
+    currentSearch = e.target.value;
+    renderTree();
+  });
+
+  renderTree();
+});
+</script>
+
+</body>
+</html>
